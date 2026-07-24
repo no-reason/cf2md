@@ -18,9 +18,32 @@
     return nodeToMarkdown(clone).trim();
   }
 
+  /**
+   * 检查文本是否包含 Unicode 数学字符
+   * Unicode 数学字母数字符号范围：U+1D400 - U+1D7FF
+   */
+  function containsUnicodeMath(text) {
+    return /[\u{1D400}-\u{1D7FF}]/u.test(text);
+  }
+
+  /**
+   * 清理文本中的 Unicode 数学字符，只保留普通字符
+   */
+  function cleanMathText(text) {
+    // 移除 Unicode 数学字符，保留空格、运算符和普通字符
+    return text.replace(/[\u{1D400}-\u{1D7FF}]/ug, '');
+  }
+
   function nodeToMarkdown(node) {
     if (node.nodeType === Node.TEXT_NODE) {
-      return node.textContent;
+      const text = node.textContent;
+      // 如果父节点是 .tex，跳过包含 Unicode 数学字符的文本节点
+      if (node.parentElement && node.parentElement.classList.contains('tex')) {
+        if (containsUnicodeMath(text)) {
+          return ''; // 跳过 Unicode 数学字符版本
+        }
+      }
+      return text;
     }
 
     if (node.nodeType !== Node.ELEMENT_NODE) return '';
@@ -66,16 +89,40 @@
             return nodeToMarkdown(mjxContainer);
           }
           
-          // MathJax 渲染后的 span，尝试提取原始公式
-          const annotation = node.querySelector('annotation[encoding="application/x-tex"]');
-          if (annotation) return `$${annotation.textContent}$`;
-          
+          // 优先提取 script 标签中的原始 LaTeX
           const script = node.querySelector('script[type="math/tex"]');
           if (script) return `$${script.textContent}$`;
           
-          // fallback：返回文本（但要去除重复）
-          const text = node.textContent.trim();
-          return text ? `$${text}$` : '';
+          // 尝试提取 annotation
+          const annotation = node.querySelector('annotation[encoding="application/x-tex"]');
+          if (annotation) return `$${annotation.textContent}$`;
+          
+          // fallback：从子节点提取，但跳过 Unicode 数学字符
+          // 收集所有文本内容
+          const allText = node.textContent.trim();
+          
+          // 如果包含 Unicode 数学字符，尝试清理
+          if (containsUnicodeMath(allText)) {
+            // 分离出不同版本的文本
+            const textNodes = [];
+            const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+            let textNode;
+            while (textNode = walker.nextNode()) {
+              const text = textNode.textContent.trim();
+              if (text && !containsUnicodeMath(text)) {
+                textNodes.push(text);
+              }
+            }
+            
+            // 如果找到了非 Unicode 版本，使用第一个
+            if (textNodes.length > 0) {
+              return `$${textNodes[0]}$`;
+            }
+          }
+          
+          // 最后的 fallback：使用 children（已经过滤了 Unicode）
+          const cleanText = children.trim();
+          return cleanText ? `$${cleanText}$` : '';
         }
         
         if (node.classList.contains('math') || node.classList.contains('tex-math')) {

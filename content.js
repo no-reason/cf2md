@@ -26,6 +26,32 @@
     if (node.nodeType !== Node.ELEMENT_NODE) return '';
 
     const tag = node.tagName.toLowerCase();
+
+    // 数学公式优先处理 - 避免重复提取
+    // MathJax v3 容器
+    if (tag === 'mjx-container') {
+      const script = node.querySelector('script[type="math/tex"]');
+      if (script) return `$${script.textContent}$`;
+      
+      const annotation = node.querySelector('annotation[encoding="application/x-tex"]');
+      if (annotation) return `$${annotation.textContent}$`;
+      
+      const altText = node.getAttribute('alt');
+      if (altText) return `$${altText}$`;
+      
+      return '';
+    }
+
+    // .tex-span 或 .tex-font-style-* 等 MathJax 渲染元素
+    if (tag === 'span' && (
+      node.classList.contains('tex-span') ||
+      node.classList.contains('MJX-TEX') ||
+      Array.from(node.classList).some(c => c.startsWith('tex-font-'))
+    )) {
+      // 跳过，由父级 mjx-container 处理
+      return '';
+    }
+
     const children = Array.from(node.childNodes)
       .map(nodeToMarkdown)
       .join('');
@@ -34,35 +60,29 @@
       // 数学公式：保持原始 LaTeX 标记
       case 'span':
         if (node.classList.contains('tex')) {
+          // 检查是否包含 mjx-container
+          const mjxContainer = node.querySelector('mjx-container');
+          if (mjxContainer) {
+            return nodeToMarkdown(mjxContainer);
+          }
+          
           // MathJax 渲染后的 span，尝试提取原始公式
           const annotation = node.querySelector('annotation[encoding="application/x-tex"]');
           if (annotation) return `$${annotation.textContent}$`;
-          // 如果有 MathJax 的 mjx-container
-          const mjx = node.querySelector('mjx-container');
-          if (mjx) {
-            const altText = mjx.getAttribute('alt');
-            if (altText) return `$${altText}$`;
-          }
-          // fallback：返回文本
-          return children || node.textContent;
+          
+          const script = node.querySelector('script[type="math/tex"]');
+          if (script) return `$${script.textContent}$`;
+          
+          // fallback：返回文本（但要去除重复）
+          const text = node.textContent.trim();
+          return text ? `$${text}$` : '';
         }
+        
         if (node.classList.contains('math') || node.classList.contains('tex-math')) {
           return `$${node.textContent}$`;
         }
-        // MathJax v3 渲染的公式
-        if (node.classList.contains('MathJax') || node.getAttribute('data-mathml')) {
-          return `$${node.textContent}$`;
-        }
+        
         return children;
-
-      case 'mjx-container':
-        // MathJax v3 容器
-        const mjxAlt = node.getAttribute('alt');
-        if (mjxAlt) return `$${mjxAlt}$`;
-        // 尝试从内部提取
-        const mjxAnn = node.querySelector('annotation[encoding="application/x-tex"]');
-        if (mjxAnn) return `$${mjxAnn.textContent}$`;
-        return node.textContent;
 
       // 标题
       case 'h1': return `\n\n# ${children.trim()}\n\n`;

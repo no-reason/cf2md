@@ -214,15 +214,21 @@
 
     // 样例
     parts.samples = [];
-    const sampleTests = problemDiv.querySelectorAll('.sample-tests .test');
-    sampleTests.forEach(test => {
-      const inputEl = test.querySelector('.input .content');
-      const outputEl = test.querySelector('.output .content');
-      parts.samples.push({
-        input: inputEl ? inputEl.textContent.trim() : '',
-        output: outputEl ? outputEl.textContent.trim() : '',
-      });
-    });
+    const sampleTests = problemDiv.querySelector('.sample-tests');
+    if (sampleTests) {
+      const inputs = sampleTests.querySelectorAll('.input');
+      const outputs = sampleTests.querySelectorAll('.output');
+      
+      for (let i = 0; i < Math.max(inputs.length, outputs.length); i++) {
+        const inputContent = inputs[i] ? inputs[i].querySelector('pre') || inputs[i].querySelector('.content') : null;
+        const outputContent = outputs[i] ? outputs[i].querySelector('pre') || outputs[i].querySelector('.content') : null;
+        
+        parts.samples.push({
+          input: inputContent ? inputContent.textContent.trim() : '',
+          output: outputContent ? outputContent.textContent.trim() : '',
+        });
+      }
+    }
 
     // 注释/提示
     const note = problemDiv.querySelector('.note');
@@ -283,24 +289,19 @@
       lines.push('## 样例');
       lines.push('');
       problem.samples.forEach((sample, index) => {
-        if (problem.samples.length > 1) {
-          lines.push(`**样例 ${index + 1}**`);
-          lines.push('');
-        }
-        lines.push('<details>');
-        lines.push(`<summary>样例 ${index + 1}</summary>`);
+        lines.push(`### 样例 ${index + 1}`);
         lines.push('');
-        lines.push('**输入：**');
+        lines.push('**输入**');
+        lines.push('');
         lines.push('```');
         lines.push(sample.input);
         lines.push('```');
         lines.push('');
-        lines.push('**输出：**');
+        lines.push('**输出**');
+        lines.push('');
         lines.push('```');
         lines.push(sample.output);
         lines.push('```');
-        lines.push('');
-        lines.push('</details>');
         lines.push('');
       });
     }

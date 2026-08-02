@@ -14,7 +14,15 @@
    */
   function htmlToMarkdown(element) {
     if (!element) return '';
+
     const clone = element.cloneNode(true);
+
+    // MathJax v2 会保留原始 script，并额外生成预览、渲染和辅助节点。
+    // 仅保留 script 中的原始 LaTeX，避免同一公式被转换多次。
+    clone.querySelectorAll(
+      '.MathJax_Preview, .MathJax, .MJX_Assistive_MathML'
+    ).forEach(node => node.remove());
+
     return nodeToMarkdown(clone).trim();
   }
 
@@ -37,10 +45,20 @@
   function nodeToMarkdown(node) {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = node.textContent;
-      // 如果父节点是 .tex，跳过包含 Unicode 数学字符的文本节点
-      if (node.parentElement && node.parentElement.classList.contains('tex')) {
-        if (containsUnicodeMath(text)) {
-          return ''; // 跳过 Unicode 数学字符版本
+      // 跳过 MathJax 辅助文本节点
+      if (node.parentElement) {
+        const parent = node.parentElement;
+        // 跳过 MathJax 辅助元素中的文本
+        if (parent.classList.contains('MJX_Assistive_MathML') ||
+            parent.closest('.MJX_Assistive_MathML')) {
+          return '';
+        }
+        // 跳过包含 Unicode 数学字符的文本节点（MathJax 渲染输出）
+        if (parent.classList.contains('MathJax') || 
+            parent.closest('.MathJax')) {
+          if (containsUnicodeMath(text)) {
+            return '';
+          }
         }
       }
       return text;
@@ -50,8 +68,53 @@
 
     const tag = node.tagName.toLowerCase();
 
-    // 数学公式优先处理 - 避免重复提取
-    // MathJax v3 容器
+    // ========== MathJax v2 专门处理 ==========
+    // Codeforces 使用 MathJax v2，结构为：
+    // <span class="MathJax">...</span>
+    // <script type="math/tex">原始LaTeX</script>
+    
+    // 1. 直接处理 script[type="math/tex"] - 最高优先级
+    // 展示公式的 type 可能为 "math/tex; mode=display"。
+    if (tag === 'script' && node.getAttribute('type')?.startsWith('math/tex')) {
+      const tex = node.textContent.trim();
+      return node.getAttribute('type').includes('mode=display')
+        ? `\n\n$$\n${tex}\n$$\n\n`
+        : `$${tex}$`;
+    }
+
+    // 2. 跳过 MathJax 辅助元素
+    if (node.classList.contains('MJX_Assistive_MathML')) {
+      return '';
+    }
+
+    // 3. 处理 MathJax 主容器
+    if (tag === 'span' && node.classList.contains('MathJax')) {
+      // 查找关联的 script 标签（通过 ID）
+      const frameId = node.getAttribute('id'); // 例如 "MathJax-Element-20-Frame"
+      if (frameId) {
+        const scriptId = frameId.replace('-Frame', ''); // "MathJax-Element-20"
+        const script = document.getElementById(scriptId);
+        if (script && script.getAttribute('type') === 'math/tex') {
+          return `$${script.textContent}$`;
+        }
+      }
+      
+      // 备选：查找同级的 script 标签
+      let sibling = node.nextSibling;
+      while (sibling) {
+        if (sibling.nodeType === Node.ELEMENT_NODE &&
+            sibling.tagName.toLowerCase() === 'script' &&
+            sibling.getAttribute('type') === 'math/tex') {
+          return `$${sibling.textContent}$`;
+        }
+        sibling = sibling.nextSibling;
+      }
+      
+      // 如果找不到 script，跳过这个容器（避免输出 Unicode）
+      return '';
+    }
+
+    // ========== MathJax v3 兼容处理 ==========
     if (tag === 'mjx-container') {
       const script = node.querySelector('script[type="math/tex"]');
       if (script) return `$${script.textContent}$`;
@@ -65,16 +128,6 @@
       return '';
     }
 
-    // .tex-span 或 .tex-font-style-* 等 MathJax 渲染元素
-    if (tag === 'span' && (
-      node.classList.contains('tex-span') ||
-      node.classList.contains('MJX-TEX') ||
-      Array.from(node.classList).some(c => c.startsWith('tex-font-'))
-    )) {
-      // 跳过，由父级 mjx-container 处理
-      return '';
-    }
-
     const children = Array.from(node.childNodes)
       .map(nodeToMarkdown)
       .join('');
@@ -83,46 +136,17 @@
       // 数学公式：保持原始 LaTeX 标记
       case 'span':
         if (node.classList.contains('tex')) {
-          // 检查是否包含 mjx-container
-          const mjxContainer = node.querySelector('mjx-container');
-          if (mjxContainer) {
-            return nodeToMarkdown(mjxContainer);
-          }
-          
-          // 优先提取 script 标签中的原始 LaTeX
+          // 已被上面的 MathJax 处理覆盖，这里作为 fallback
           const script = node.querySelector('script[type="math/tex"]');
           if (script) return `$${script.textContent}$`;
           
-          // 尝试提取 annotation
+          const mjxContainer = node.querySelector('mjx-container');
+          if (mjxContainer) return nodeToMarkdown(mjxContainer);
+          
           const annotation = node.querySelector('annotation[encoding="application/x-tex"]');
           if (annotation) return `$${annotation.textContent}$`;
           
-          // fallback：从子节点提取，但跳过 Unicode 数学字符
-          // 收集所有文本内容
-          const allText = node.textContent.trim();
-          
-          // 如果包含 Unicode 数学字符，尝试清理
-          if (containsUnicodeMath(allText)) {
-            // 分离出不同版本的文本
-            const textNodes = [];
-            const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-            let textNode;
-            while (textNode = walker.nextNode()) {
-              const text = textNode.textContent.trim();
-              if (text && !containsUnicodeMath(text)) {
-                textNodes.push(text);
-              }
-            }
-            
-            // 如果找到了非 Unicode 版本，使用第一个
-            if (textNodes.length > 0) {
-              return `$${textNodes[0]}$`;
-            }
-          }
-          
-          // 最后的 fallback：使用 children（已经过滤了 Unicode）
-          const cleanText = children.trim();
-          return cleanText ? `$${cleanText}$` : '';
+          return children;
         }
         
         if (node.classList.contains('math') || node.classList.contains('tex-math')) {
@@ -237,6 +261,21 @@
   // ========== Codeforces 题目解析 ==========
 
   /**
+   * 提取题目正文。
+   * Codeforces 的题干通常是 .problem-statement 的直接子节点，并不带
+   * .description 类；只排除后续会单独格式化的结构化部分。
+   */
+  function extractDescription(problemDiv) {
+    const content = problemDiv.cloneNode(true);
+    Array.from(content.children).forEach(child => {
+      if (child.matches('.header, .input-specification, .output-specification, .sample-tests, .note')) {
+        child.remove();
+      }
+    });
+    return htmlToMarkdown(content);
+  }
+
+  /**
    * 从 Codeforces 页面提取题目内容
    */
   function extractProblem() {
@@ -254,9 +293,11 @@
         : header.textContent.trim();
     }
 
-    // 题目描述
-    const description = problemDiv.querySelector('.description');
-    parts.description = description ? htmlToMarkdown(description) : '';
+    // 题目描述：兼容旧页面的 .description，以及没有该类名的新页面结构。
+    const description = problemDiv.querySelector(':scope > .description');
+    parts.description = description
+      ? htmlToMarkdown(description)
+      : extractDescription(problemDiv);
 
     // 时间/内存限制（从头部分析）
     if (header) {
@@ -302,6 +343,44 @@
     parts.note = note ? htmlToMarkdown(note) : '';
 
     return parts;
+  }
+
+  /**
+   * 方案 2：后处理清理重复的数学公式
+   */
+  function cleanDuplicateFormulas(markdown) {
+    // 1. 清理完全相同的连续公式：$abc$$abc$ -> $abc$
+    markdown = markdown.replace(/(\$[^$]+\$)(\1)+/g, '$1');
+    
+    // 2. 清理紧挨着的相似公式（可能是不同格式）
+    // 例如：$𝑡$$t$ 或 $1≤t≤104$$1 \le t \le 10^4$
+    markdown = markdown.replace(/(\$[^$]+\$)(\$[^$]+\$)/g, (match, formula1, formula2) => {
+      const content1 = formula1.slice(1, -1).replace(/\s/g, '');
+      const content2 = formula2.slice(1, -1).replace(/\s/g, '');
+      
+      // 如果两个公式内容完全相同（忽略空格），只保留第二个
+      if (content1 === content2) {
+        return formula2;
+      }
+      
+      // 如果第一个包含 Unicode 数学字符，第二个不包含，保留第二个
+      if (containsUnicodeMath(content1) && !containsUnicodeMath(content2)) {
+        return formula2;
+      }
+      
+      // 如果第二个是第一个的子串或更完整版本，保留第二个
+      if (content1.length > 0 && content2.includes(content1)) {
+        return formula2;
+      }
+      
+      // 否则保持原样
+      return match;
+    });
+    
+    // 3. 再次清理可能产生的连续重复
+    markdown = markdown.replace(/(\$[^$]+\$)(\1)+/g, '$1');
+    
+    return markdown;
   }
 
   /**
@@ -381,7 +460,11 @@
       lines.push('');
     }
 
-    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+    // 方案 2：应用后处理清理
+    let markdown = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+    markdown = cleanDuplicateFormulas(markdown);
+    
+    return markdown;
   }
 
   // ========== UI 注入 ==========

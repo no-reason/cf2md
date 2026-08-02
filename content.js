@@ -35,11 +35,24 @@
   }
 
   /**
-   * 清理文本中的 Unicode 数学字符，只保留普通字符
+   * 规范化并输出数学公式。
+   * Codeforces 的公式源可能自带 $、$$ 或 $$$ 定界符；输出 Markdown 时
+   * 统一移除这些已有包装，避免再次包裹后出现 $$$...$$$。
    */
-  function cleanMathText(text) {
-    // 移除 Unicode 数学字符，保留空格、运算符和普通字符
-    return text.replace(/[\u{1D400}-\u{1D7FF}]/ug, '');
+  function formatMath(rawTex, isDisplay = false) {
+    let tex = rawTex.trim();
+
+    // 移除 Codeforces/MathJax 已存在的美元符号或 LaTeX 定界符。
+    const dollarWrapped = tex.match(/^\$+([\s\S]*?)\$+$/);
+    if (dollarWrapped) {
+      tex = dollarWrapped[1].trim();
+    } else if ((tex.startsWith('\\(') && tex.endsWith('\\)')) ||
+               (tex.startsWith('\\[') && tex.endsWith('\\]'))) {
+      tex = tex.slice(2, -2).trim();
+    }
+
+    if (!tex) return '';
+    return isDisplay ? `\n\n$$\n${tex}\n$$\n\n` : `$${tex}$`;
   }
 
   function nodeToMarkdown(node) {
@@ -76,10 +89,10 @@
     // 1. 直接处理 script[type="math/tex"] - 最高优先级
     // 展示公式的 type 可能为 "math/tex; mode=display"。
     if (tag === 'script' && node.getAttribute('type')?.startsWith('math/tex')) {
-      const tex = node.textContent.trim();
-      return node.getAttribute('type').includes('mode=display')
-        ? `\n\n$$\n${tex}\n$$\n\n`
-        : `$${tex}$`;
+      return formatMath(
+        node.textContent,
+        node.getAttribute('type').includes('mode=display')
+      );
     }
 
     // 2. 跳过 MathJax 辅助元素
@@ -95,7 +108,10 @@
         const scriptId = frameId.replace('-Frame', ''); // "MathJax-Element-20"
         const script = document.getElementById(scriptId);
         if (script && script.getAttribute('type') === 'math/tex') {
-          return `$${script.textContent}$`;
+          return formatMath(
+            script.textContent,
+            script.getAttribute('type')?.includes('mode=display')
+          );
         }
       }
       
@@ -117,13 +133,16 @@
     // ========== MathJax v3 兼容处理 ==========
     if (tag === 'mjx-container') {
       const script = node.querySelector('script[type="math/tex"]');
-      if (script) return `$${script.textContent}$`;
+      if (script) return formatMath(
+            script.textContent,
+            script.getAttribute('type')?.includes('mode=display')
+          );
       
       const annotation = node.querySelector('annotation[encoding="application/x-tex"]');
-      if (annotation) return `$${annotation.textContent}$`;
+      if (annotation) return formatMath(annotation.textContent);
       
       const altText = node.getAttribute('alt');
-      if (altText) return `$${altText}$`;
+      if (altText) return formatMath(altText);
       
       return '';
     }
@@ -138,19 +157,22 @@
         if (node.classList.contains('tex')) {
           // 已被上面的 MathJax 处理覆盖，这里作为 fallback
           const script = node.querySelector('script[type="math/tex"]');
-          if (script) return `$${script.textContent}$`;
+          if (script) return formatMath(
+            script.textContent,
+            script.getAttribute('type')?.includes('mode=display')
+          );
           
           const mjxContainer = node.querySelector('mjx-container');
           if (mjxContainer) return nodeToMarkdown(mjxContainer);
           
           const annotation = node.querySelector('annotation[encoding="application/x-tex"]');
-          if (annotation) return `$${annotation.textContent}$`;
+          if (annotation) return formatMath(annotation.textContent);
           
           return children;
         }
         
         if (node.classList.contains('math') || node.classList.contains('tex-math')) {
-          return `$${node.textContent}$`;
+          return formatMath(node.textContent);
         }
         
         return children;

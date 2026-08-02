@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Codeforces Markdown Copy",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "一键将 Codeforces 题目转换为 Markdown 并复制到剪贴板",
   "icons": {
     "16": "icons/icon16.png",

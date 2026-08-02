@@ -298,6 +298,35 @@
   }
 
   /**
+   * 提取样例输入/输出中的纯文本。
+   * Codeforces 通常使用 <pre>line 1<br>line 2</pre> 保存多行样例，
+   * textContent 会忽略 <br>，因此必须显式将其转换为换行符。
+   */
+  function extractSampleText(element) {
+    if (!element) return '';
+
+    // Codeforces 的样例常以 <pre>第一行<br>第二行</pre> 存储。
+    // textContent 不会把 <br> 视作换行；在克隆节点中替换为真实换行后再读取，
+    // 可避免 innerText 受 CSS 或浏览器渲染状态影响。
+    const clone = element.cloneNode(true);
+    clone.querySelectorAll('br').forEach(br => {
+      br.replaceWith(document.createTextNode('\n'));
+    });
+
+    // 兼容少数题面使用 div/p/li 作为样例行的情况。
+    clone.querySelectorAll('div, p, li').forEach(block => {
+      if (block.nextSibling) {
+        block.after(document.createTextNode('\n'));
+      }
+    });
+
+    return clone.textContent
+      .replace(/\r\n?/g, '\n')
+      .replace(/\n+$/g, '')
+      .trim();
+  }
+
+  /**
    * 从 Codeforces 页面提取题目内容
    */
   function extractProblem() {
@@ -354,8 +383,8 @@
         const outputContent = outputs[i] ? outputs[i].querySelector('pre') || outputs[i].querySelector('.content') : null;
         
         parts.samples.push({
-          input: inputContent ? inputContent.textContent.trim() : '',
-          output: outputContent ? outputContent.textContent.trim() : '',
+          input: extractSampleText(inputContent),
+          output: extractSampleText(outputContent),
         });
       }
     }
